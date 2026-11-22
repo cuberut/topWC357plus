@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         TOPWC357+
-// @version      0.4.1
+// @version      0.4.2
 // @author       cuberut
 // @description  Wspomaganie głosowania w Topie Wszech Czasów
 // @match        https://radio357.pl/top/glosowanie/*
@@ -25,6 +25,19 @@ GM_addStyle("div.ct-chart g.ct-series-b .ct-line, div.ct-chart g.ct-series-c .ct
 GM_addStyle("div.ct-chart g.ct-series-b .ct-point, div.ct-chart g.ct-series-c .ct-point { display: none; }");
 
 GM_addStyle("span.tagLog { position: absolute; right: 0; top: 0; right: 0px; bottom: 0; align-items: center; display: flex; font-size: x-small; color: #6b7280; }");
+
+GM_addStyle(`
+    .top-vote-panel__artist-group h3 {
+        transition: transform 0.25s ease-out, opacity 0.25s ease-out !important;
+        transform-origin: left center;
+        will-change: transform, opacity;
+    }
+
+    .top-vote-panel__artist-group.is-empty h3 {
+        transform: scale(0.75) !important;
+        opacity: 0.4 !important;
+    }
+`);
 
 GM_addStyle(`
     span#infoVisible { display: inline-block; text-align: right; width: 40px; }
@@ -107,6 +120,11 @@ const changeInfoStatus = () => {
         const amountPercent = amountVisible / amountAll * 100;
         infoPercent.innerText = Math.floor(amountPercent);
     }
+
+    document.querySelectorAll('.top-vote-panel__artist-group').forEach(group => {
+        const hasVisible = group.querySelector('.lp-song-item:not([hidden])');
+        group.classList.toggle('is-empty', !hasVisible);
+    });
 }
 
 const setCheckboxOnly = (element, rest, dic) => {
