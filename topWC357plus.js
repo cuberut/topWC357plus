@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         TOPWC357+
-// @version      0.3
+// @version      0.4
 // @author       cuberut
-// @description  Wspomaganie głosowania w Topie Wszech Czasów - Pobieranie całości w jednym żądaniu
+// @description  Wspomaganie głosowania w Topie Wszech Czasów
 // @match        https://radio357.pl/top/glosowanie/*
 // @updateURL    https://raw.githubusercontent.com/cuberut/topWC357plus/main/topWC357plus.js
 // @downloadURL  https://raw.githubusercontent.com/cuberut/topWC357plus/main/topWC357plus.js
@@ -12,275 +12,344 @@
 // @grant        GM_getResourceText
 // ==/UserScript==
 
-// --- STYLOWANIE ---
-GM_addStyle(GM_getResourceText("REMOTE_CSS"));
+const myCss = GM_getResourceText("REMOTE_CSS");
+GM_addStyle(myCss);
+GM_addStyle("div.ct-chart { background-color: white; opacity: 95% }");
+
+// Seria A to właściwy wykres utworu
+GM_addStyle("div.ct-chart g.ct-series-a .ct-line { stroke: #f95f1f; stroke-width: 3px; }");
+GM_addStyle("div.ct-chart g.ct-series-a .ct-point { stroke: #f95f1f; fill: #f95f1f; }");
+
+// Seria B i C to dynamiczne przerywane linie progów Top 357 i Top 777
+GM_addStyle("div.ct-chart g.ct-series-b .ct-line, div.ct-chart g.ct-series-c .ct-line { stroke: #6b7280; stroke-dasharray: 8; stroke-width: 2px; opacity: 0.7; }");
+GM_addStyle("div.ct-chart g.ct-series-b .ct-point, div.ct-chart g.ct-series-c .ct-point { display: none; }");
+
+GM_addStyle("span.tagLog { position: absolute; right: 0; top: 0; right: 0px; bottom: 0; align-items: center; display: flex; font-size: x-small; color: #6b7280; }");
+
 GM_addStyle(`
-    div.ct-chart { background-color: white; opacity: 0.95; position: absolute; z-index: 1000; display: none; margin-left: -20px; }
-    div.ct-chart.active { display: block; }
-    div.ct-chart g.ct-grids line[y1='330'] { stroke-dasharray: 8; stroke-width: 2; }
-    div.ct-chart g.ct-series-a .ct-line { stroke: #f95f1f }
-    div.ct-chart g.ct-series-a .ct-point { stroke: #f95f1f; fill: #f95f1f; }
-    span.tagLog { position: absolute; right: 0; top: 0; bottom: 0; align-items: center; display: flex; font-size: x-small; color: #6b7280; }
-    div#extraTools { display: flex; flex-direction: column; gap: 6px; margin-top: 50px; margin-bottom: 0.5em; }
-    div#extraTools > div { width: 100%; box-sizing: border-box; }
+    span#infoVisible { display: inline-block; text-align: right; width: 40px; }
+    div#extraTools { margin: 3rem 0 1rem; }
+    div#extraTools div, div#extraTools select { display: inline-block; }
 `);
 
-// --- KONFIGURACJA API ---
+GM_addStyle("section.custom-lp .container-xxxl { position: static !important; }");
+GM_addStyle("section.custom-lp .container-xxxl .left { z-index: 999; }");
+
 const urlApi = 'https://cgudntoxuckknrtocdet.supabase.co/rest/v1/current_top_stats?select=*';
 const publicKey = 'sb_publishable_gNicZcTRVPvCDeRQNDtpeQ_Pz__cyYq';
 const listNo = 6;
-const YEARS_LABELS = [...Array(listNo - 1).keys()].map(x => (x + 2021));
 
-// --- GLOBALNY STAN ---
-let extraTools, infoVisible, infoPercent;
-let amountAll = 0;
-let mainListItems = [];
-const statsMap = new Map();
-const yearDict = { "0": { list: new Set(), name: "NIEPRZYPISANE" } };
-let singleChartInstance = null;
-
-// --- FUNKCJE POBIERANIA DANYCH ---
 const getList = async () => {
-    try {
-        // Jedno zapytanie pobierające całość (wymuszony wysoki limit, aby ominąć domyślne 1000 w PostgREST)
-        const response = await fetch(`${urlApi}&limit=3000`, {
-            method: 'GET',
-            headers: {
-                'apikey': publicKey,
-                'Authorization': `Bearer ${publicKey}`
+    const response = await fetch(urlApi, {
+        method: 'GET',
+        headers: {
+            'apikey': publicKey,
+            'Authorization': `Bearer ${publicKey}`
+        }
+    });
+    const data = await response.json();
+    return data;
+}
+
+const setInfoStatus = (amount) => `<p id="infoStatus">Liczba widocznych utworów: <strong><span id="infoVisible">${amount}</span>/<span>${amount}</span></strong> (<span id="infoPercent">100</span>%)`;
+
+const setCheckOnlyIsNew = (amount) => `<input id="onlyIsNew" type="checkbox" class="custom-check custom-checkbox" ${amount || 'disabled'}><label for="onlyIsNew"><span>Pokaż tylko nowości - ${amount} pozycji</span></label>`;
+const setCheckOnlyChart = (amount) => `<input id="onlyChart" type="checkbox" class="custom-check custom-checkbox" ${amount || 'disabled'}><label for="onlyChart"><span>Pokaż tylko z historią - ${amount} pozycji</span></label>`;
+const setCheckOnlyBDNT = (amount) => `<input id="onlyBDNT" type="checkbox" class="custom-check custom-checkbox" ${amount || 'disabled'}><label for="onlyBDNT"><span>Pokaż tylko utwory BDNT - ${amount} pozycji</span></label>`;
+
+const setSelectByYears = () => `<label class="form-check-label" style="margin-top: 8px;">Pokaż tylko utwory z lat:</label>&#11;<select id="chooseByYears"></select>`;
+
+let extraTools, historyCharts;
+
+const setWebsite = () => {
+    const topPartners = document.querySelector('section.top-partners');
+
+    if (topPartners) {
+        topPartners.remove();
+    }
+
+    const customLp = document.querySelector('section.custom-lp');
+    const votingWrapper = document.querySelector('.container-xxxl');
+    const leftPanel = votingWrapper.querySelector('.left');
+
+    const topTile = leftPanel.querySelector('.top-title');
+    topTile.hidden = true;
+
+    leftPanel.insertAdjacentHTML('beforeend', `
+        <div id="infoBox">
+          <div id="extraTools"></div>
+          <div id="historyCharts"></div>
+        </div>
+    `);
+    extraTools = leftPanel.querySelector('#extraTools');
+    historyCharts = leftPanel.querySelector('#historyCharts');
+}
+
+let amountAll, infoVisible, infoPercent;
+
+const addInfoStatus = () => {
+    amountAll = mainList.length;
+    extraTools.insertAdjacentHTML('beforeend', setInfoStatus(amountAll));
+
+    infoVisible = extraTools.querySelector('#infoVisible');
+    infoPercent = extraTools.querySelector('#infoPercent');
+}
+
+const changeInfoStatus = () => {
+    const amountVisible = voteList.querySelectorAll('.top-vote-panel__item-content:not([hidden])').length;
+    infoVisible.innerText = amountVisible;
+
+    if (amountVisible == amountAll) {
+        infoPercent.innerText = 100;
+    } else if (amountVisible == 0) {
+        infoPercent.innerText = 0;
+    } else {
+        const amountPercent = amountVisible / amountAll * 100;
+        infoPercent.innerText = Math.floor(amountPercent);
+    }
+}
+
+const setCheckboxOnly = (element, rest, dic) => {
+    element.onclick = (e) => {
+        const checked = e.target.checked;
+
+        Object.entries(itemDict).forEach(([key, item]) => {
+            if (dic[key] === undefined) {
+                item.hidden = checked;
+            } else {
+                item.hidden = !dic[key] && checked;
             }
         });
-        
-        const data = await response.json();
-        
-        // Zabezpieczenie: jeśli z jakiegoś powodu API zwróci błąd w formie obiektu, upewniamy się, że zwracamy tablicę
-        return Array.isArray(data) ? data : [];
-    } catch(e) {
-        console.error("TOPWC357+: Błąd pobierania bazy:", e);
-        return [];
+
+        rest.forEach(x => { x.checked = false });
+        changeInfoStatus();
     }
+}
+
+const addCheckboxes = (setList) => {
+    extraTools.insertAdjacentHTML('beforeend', `<div id="chb1"></div>`);
+    extraTools.insertAdjacentHTML('beforeend', `<div id="chb2"></div>`);
+    extraTools.insertAdjacentHTML('beforeend', `<div id="chb3"></div>`);
+
+    const checkboxes1 = extraTools.querySelector("#chb1");
+    const checkboxes2 = extraTools.querySelector("#chb2");
+    const checkboxes3 = extraTools.querySelector("#chb3");
+
+    const onlyNewLength = listIsNew.filter(item => item.state).length;
+    const checkOnlyIsNew = setCheckOnlyIsNew(onlyNewLength);
+    checkboxes1.insertAdjacentHTML('beforeend', checkOnlyIsNew);
+    const onlyIsNew = checkboxes1.querySelector("#onlyIsNew");
+    const dicIsNew = listIsNew.reduce((dic, item) => ({...dic, [item.id]: item.state }), {});
+
+    const onlyBDNTLength = listBDNT.filter(item => item.state).length;
+    const checkOnlyBDNT = setCheckOnlyBDNT(onlyBDNTLength);
+    checkboxes2.insertAdjacentHTML('beforeend', checkOnlyBDNT);
+    const onlyBDNT = checkboxes2.querySelector("#onlyBDNT");
+    const dicBDNT = listBDNT.reduce((dic, item) => ({...dic, [item.id]: item.state }), {});
+
+    const onlyRankedLength = listChart.filter(item => item.state).length;
+    const checkOnlyChart = setCheckOnlyChart(onlyRankedLength);
+    checkboxes3.insertAdjacentHTML('beforeend', checkOnlyChart);
+    const onlyChart = checkboxes3.querySelector("#onlyChart");
+    const dicChart = listChart.reduce((dic, item) => ({...dic, [item.id]: item.state }), {});
+
+    setCheckboxOnly(onlyIsNew, [onlyChart, onlyBDNT], dicIsNew);
+    setCheckboxOnly(onlyBDNT, [onlyIsNew, onlyChart], dicBDNT);
+    setCheckboxOnly(onlyChart, [onlyIsNew, onlyBDNT], dicChart);
+}
+
+const yearDict = { "0": {list:[], name: "NIEPRZYPISANE"} }
+const setOptions = (dic) => Object.keys(dic)
+    .filter(id => dic[id].list.length)
+    .reduce((options, id) => `${options}<option value=${id}>${dic[id].name} (${dic[id].list.length})</option>`, "<option value=''>Wybierz...</option>");
+
+const setSelector = (element, keys) => {
+    element.onchange = (e) => {
+        const value = e.target.value;
+        mainList.forEach((item, i) => { item.hidden = keys[value] ? !keys[value].list.includes(item.querySelector('input').getAttribute('data-r357api-uuid')) : false });
+        changeInfoStatus();
+    }
+}
+
+let selectors;
+
+const addSelectors = (setList) => {
+    extraTools.insertAdjacentHTML('beforeend', `<div id="selectors"></div>`);
+    selectors = extraTools.querySelector("#selectors");
+
+    selectors.insertAdjacentHTML('beforeend', setSelectByYears());
+    const chooseByYears = selectors.querySelector("#chooseByYears");
+    chooseByYears.insertAdjacentHTML('beforeend', setOptions(yearDict));
+
+    setSelector(chooseByYears, yearDict);
+}
+
+const resetSelectors = () => selectors.querySelectorAll('select').forEach(select => { select.value = "" });
+
+const getTagLog = (rank, change) => {
+    return rank ? `<span class="tagLog">ostatnia poz.: ${rank}` + (change ? ` (${change})` : '') + `</span>` : '';
 };
 
-// --- KOMPONENTY UI ---
-const renderInfoStatus = (amount) => `
-    <p id="infoStatus">Liczba widocznych utworów:
-        <strong><span id="infoVisible">${amount}</span>/<span>${amount}</span></strong>
-        (<span id="infoPercent">100</span>%)
-    </p>`;
 
-const renderCheckbox = (id, label, amount) => `
-    <div id="${id}Container">
-        <input id="${id}" type="checkbox" class="custom-check custom-checkbox" ${amount ? '' : 'disabled'}>
-        <label for="${id}"><span>${label} - ${amount} pozycji</span></label>
-    </div>`;
+let voteList, mainList, itemDict, leftPanel;
+let listIsNew, listChart, listBDNT;
+let dicYear = {}, dicGroup = {}, dicGroupSong = {};
 
-const renderYearOptions = (dic) => Object.keys(dic)
-    .filter(id => dic[id].list.size)
-    .reduce((html, id) => `${html}<option value="${id}">${dic[id].name} (${dic[id].list.size})</option>`, "<option value=''>Wybierz...</option>");
+const addTags = (votePanel, setList) => {
+    mainList = [...votePanel.querySelectorAll("li")];
+    itemDict = mainList.reduce((itemDict, item) => ({
+        ...itemDict,
+        [item.querySelector('button').getAttribute('data-r357api-id')]: item
+    }), []);
 
-const updateCounters = () => {
-    let amountVisible = 0;
-    for(const item of mainListItems) {
-        if (!item.element.hidden) amountVisible++;
-    }
-
-    infoVisible.textContent = amountVisible;
-
-    if (amountVisible === amountAll) {
-        infoPercent.textContent = "100";
-    } else if (amountVisible === 0) {
-        infoPercent.textContent = "0";
-    } else {
-        infoPercent.textContent = Math.floor((amountVisible / amountAll) * 100);
-    }
-};
-
-// --- LOGIKA FILTRÓW ---
-const setupFilters = () => {
-    const onlyIsNew = document.getElementById("onlyIsNew");
-    const onlyChart = document.getElementById("onlyChart");
-    const chooseByYears = document.getElementById("chooseByYears");
-
-    const applyFilters = () => {
-        const isNewChecked = onlyIsNew.checked;
-        const isChartChecked = onlyChart.checked;
-        const selectedYear = chooseByYears.value;
-
-        for (const item of mainListItems) {
-            const stats = statsMap.get(item.uuid);
-            let shouldHide = false;
-
-            if (isNewChecked && (!stats || !stats.isNew)) shouldHide = true;
-            if (isChartChecked && (!stats || !stats._hasValidHistory)) shouldHide = true;
-            if (selectedYear) {
-                if (!yearDict[selectedYear].list.has(item.uuid)) shouldHide = true;
-            }
-
-            item.element.hidden = shouldHide;
-        }
-        updateCounters();
+    const hasValidHistory = (historyStr) => {
+        if (!historyStr) return false;
+        const values = String(historyStr).split(',');
+        return values.some(pos => {
+            const val = parseInt(pos.trim(), 10);
+            return !isNaN(val) && val > 0 && val <= 777;
+        });
     };
 
-    onlyIsNew.addEventListener('change', () => {
-        if (onlyIsNew.checked) onlyChart.checked = false;
-        applyFilters();
-    });
-
-    onlyChart.addEventListener('change', () => {
-        if (onlyChart.checked) onlyIsNew.checked = false;
-        applyFilters();
-    });
-
-    chooseByYears.addEventListener('change', applyFilters);
-};
-
-// --- GŁÓWNA INICJALIZACJA ---
-const initializeApp = (apiData) => {
-    const voteList = document.querySelector('.vote_patron');
-    if(!voteList) return;
-
-    const leftPanel = document.querySelector('#lp_info_content');
-    const subheading = leftPanel.querySelector('.top-title');
-    if(subheading) subheading.hidden = true;
-
-    let countNew = 0;
-    let countRanked = 0;
-
-    for (const item of apiData) {
-        let hasValidHistory = false;
-        if (item.history && item.history !== ",,,,") {
-            const positions = item.history.split(',').filter(x => x !== '');
-            hasValidHistory = positions.some(x => parseInt(x, 10) <= 500);
-        }
-        
-        item._hasValidHistory = hasValidHistory;
-        statsMap.set(item.id, item);
-
-        if (item.isNew) countNew++;
-        if (item._hasValidHistory) countRanked++;
-
-        if (item.years) {
-            if (!yearDict[item.years]) {
-                yearDict[item.years] = { list: new Set(), name: `${item.years}-${item.years.substring(0, 3)}9` };
-            }
-            yearDict[item.years].list.add(item.id);
-        } else {
-            yearDict["0"].list.add(item.id);
-        }
+    const triggerStats = (chart, state) => {
+        chart.hidden = state;
     }
 
-    const domItems = voteList.querySelectorAll("li");
-    amountAll = domItems.length;
+    listIsNew = setList.reduce((list, item) => item.isNew ? [...list, { id: item.id, state: !!item.isNew }] : list, []);
+    listChart = setList.reduce((list, item) => hasValidHistory(item.history) ? [...list, { id: item.id, state: true }] : list, []);
+    listBDNT = setList.reduce((list, item) => item.isBDNT ? [...list, { id: item.id, state: !!item.isBDNT }] : list, []);
 
-    domItems.forEach((li) => {
-        const btn = li.querySelector('button');
-        const uuid = li.querySelector('input')?.getAttribute('data-r357api-uuid') || btn?.getAttribute('data-r357api-id');
+    dicYear = setList.reduce((dic, item) => ({
+        ...dic,
+        [item.id]: +item.year
+    }), []);
 
-        if(!uuid) return;
+    setList.forEach((item, i) => {
+        const {id, isNew, rank, change, year, years, history} = item;
 
-        mainListItems.push({
-            element: li,
-            uuid: uuid
-        });
-
-        const stats = statsMap.get(uuid);
-        if (stats && stats._hasValidHistory) {
-            const itemText = li.querySelector('.lp-song-details');
-            if (itemText) {
-                itemText.style.position = "relative";
-                if(stats.rank) {
-                    const tagLog = `<span class="tagLog">ostatnia poz.: ${stats.rank}${stats.change ? ` (${stats.change})` : ''}</span>`;
-                    itemText.insertAdjacentHTML('beforeend', tagLog);
-                }
-            }
-        }
-    });
-
-    const toolsHtml = `
-        <div id="extraTools">
-            ${renderInfoStatus(amountAll)}
-            ${renderCheckbox('onlyIsNew', 'Pokaż tylko nowości', countNew)}
-            ${renderCheckbox('onlyChart', 'Pokaż tylko z historią', countRanked)}
-            <div id="selectors">
-                <label class="form-check-label">Pokaż tylko utwory z lat:</label>
-                <select id="chooseByYears">${renderYearOptions(yearDict)}</select>
-            </div>
-        </div>
-        <div id="masterChart" class="ct-chart"></div>
-    `;
-    subheading.insertAdjacentHTML('afterend', toolsHtml);
-
-    extraTools = document.getElementById('extraTools');
-    infoVisible = document.getElementById('infoVisible');
-    infoPercent = document.getElementById('infoPercent');
-
-    const masterChartEl = document.getElementById('masterChart');
-    singleChartInstance = new window.Chartist.Line('#masterChart',
-        { labels: YEARS_LABELS, series: [[]] },
-        {
-            height: '650px', width: '450px', fullWidth: false, fillHoles: false,
-            axisY: { low: -500, high: -1, onlyInteger: true, labelInterpolationFnc: value => -value }
-        }
-    );
-
-    setupFilters();
-
-    voteList.addEventListener('mouseover', (e) => {
-        const li = e.target.closest('li');
-        if (!li) return;
-
-        const match = mainListItems.find(item => item.element === li);
-        if(!match) return;
-
-        const stats = statsMap.get(match.uuid);
-        if (stats && stats._hasValidHistory) {
-            const seriesData = stats.history.split(",").map(x => (x ? -parseInt(x, 10) : null));
-            singleChartInstance.update({ labels: YEARS_LABELS, series: [seriesData] });
-            masterChartEl.classList.add('active');
-        }
-    });
-
-    voteList.addEventListener('mouseout', (e) => {
-        const li = e.target.closest('li');
-        if (li) {
-            masterChartEl.classList.remove('active');
-        }
-    });
-};
-
-const waitForElement = (selector) => {
-    return new Promise(resolve => {
-        if (document.querySelector(selector)) {
-            return resolve(document.querySelector(selector));
-        }
-
-        const observer = new MutationObserver(mutations => {
-            if (document.querySelector(selector)) {
-                observer.disconnect(); 
-                resolve(document.querySelector(selector));
-            }
-        });
-
-        observer.observe(document.body, {
-            childList: true,
-            subtree: true
-        });
-    });
-};
-
-// --- BOOTSTRAP ---
-(async function() {
-    try {
-        const apiData = await getList();
-        if(!apiData || !apiData.length) {
-            console.error("TOPWC357+: Brak danych z bazy Supabase");
+        if (!hasValidHistory(history)) {
             return;
         }
 
-        await waitForElement('[data-r357api-role="voting"]');
-        initializeApp(apiData);
+        const element = itemDict[id];
+        if (!element) {
+            return;
+        }
 
-    } catch (e) {
-        console.error("TOPWC357+: Błąd inicjalizacji", e);
-    }
+        const itemText = element.querySelector('.lp-song-details');
+        itemText.style.position = "relative";
+
+        const tagLog = getTagLog(rank, change);
+        itemText.insertAdjacentHTML('beforeend', tagLog);
+
+        historyCharts.insertAdjacentHTML('beforeend', `<div id="chart-${i}" class="ct-chart" hidden></div>`);
+        const chart = historyCharts.querySelector(`#chart-${i}`);
+
+        let isChartRendered = false;
+
+        element.addEventListener('mouseover', (e) => {
+            if (!isChartRendered) {
+                const labels = [...Array(listNo-1).keys()].map(x => (x + 2021));
+
+                const seriesData = String(history).split(",").map(x => {
+                    const val = parseInt(x.trim(), 10);
+                    return (!isNaN(val) && val > 0) ? -val : null;
+                });
+
+                const validValues = seriesData.filter(x => x !== null);
+                let minSeriesValue = -357;
+                let maxSeriesValue = -1;
+
+                if (validValues.length > 0) {
+                    minSeriesValue = Math.min(...validValues);
+                    maxSeriesValue = Math.max(...validValues);
+                }
+
+                let dynamicYLow = Math.floor((minSeriesValue - 10) / 10) * 10;
+                let dynamicYHigh = Math.ceil((maxSeriesValue + 10) / 10) * 10;
+
+                if (dynamicYHigh > -1) {
+                    dynamicYHigh = -1;
+                }
+
+                if (Math.abs(dynamicYHigh - dynamicYLow) < 20) {
+                    dynamicYLow -= 10;
+                    if (dynamicYHigh < -1) {
+                        dynamicYHigh = Math.min(dynamicYHigh + 10, -1);
+                    }
+                }
+
+                const seriesToRender = [ seriesData ];
+
+                if (dynamicYLow <= -357 && dynamicYHigh >= -357) {
+                    seriesToRender.push(labels.map(() => -357));
+                }
+
+                if (dynamicYLow <= -777 && dynamicYHigh >= -777) {
+                    seriesToRender.push(labels.map(() => -777));
+                }
+
+                new window.Chartist.Line(chart, {
+                    labels: labels,
+                    series: seriesToRender
+                }, {
+                    height: '450px',
+                    width: '450px',
+                    fullWidth: false,
+                    fillHoles: false,
+                    axisY: {
+                        low: dynamicYLow,
+                        high: dynamicYHigh,
+                        onlyInteger: true,
+                        labelInterpolationFnc: value => -value
+                    }
+                });
+
+                isChartRendered = true;
+            }
+
+            triggerStats(chart, false);
+        });
+
+        element.addEventListener('mouseout', (e) => { triggerStats(chart, true) });
+    });
+
+    setList.forEach((item, i) => {
+        if (!item.years) {
+            yearDict["0"].list.push(item.id);
+            return;
+        }
+
+        const yearsKeys = Object.keys(yearDict);
+        const isYearsKey = yearsKeys.includes(item.years);
+
+        if (!isYearsKey) {
+            yearDict[item.years] = { list: [item.id], name: item.years + "-" + item.years.substr(0, 3) + "9" };
+        } else {
+            yearDict[item.years].list.push(item.id);
+        }
+    });
+
+    setWebsite();
+    addInfoStatus();
+    addCheckboxes(setList);
+    addSelectors(setList);
+}
+
+(function init() {
+    getList().then(setList => {
+        const checkForElement = () => {
+          const votePanel = document.querySelector('[data-r357api-role="voting"]');
+
+            if (!votePanel) {
+                requestAnimationFrame(checkForElement);
+                return;
+            }
+
+            setWebsite();
+            addTags(votePanel, setList);
+        };
+
+        requestAnimationFrame(checkForElement);
+    });
 })();
