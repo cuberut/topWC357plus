@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         TOPWC357+
-// @version      0.4
+// @version      0.4.1
 // @author       cuberut
 // @description  Wspomaganie głosowania w Topie Wszech Czasów
 // @match        https://radio357.pl/top/glosowanie/*
@@ -96,7 +96,7 @@ const addInfoStatus = () => {
 }
 
 const changeInfoStatus = () => {
-    const amountVisible = voteList.querySelectorAll('.top-vote-panel__item-content:not([hidden])').length;
+    const amountVisible = document.querySelectorAll('.vote_patron ul.lp-song-list .lp-song-item:not([hidden])').length;
     infoVisible.innerText = amountVisible;
 
     if (amountVisible == amountAll) {
