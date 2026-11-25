@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         TOPWC357+
-// @version      0.4.2
+// @version      0.5
 // @author       cuberut
 // @description  Wspomaganie głosowania w Topie Wszech Czasów
 // @match        https://radio357.pl/top/glosowanie/*
@@ -74,7 +74,7 @@ const setSelectByYears = () => `<label class="form-check-label" style="margin-to
 
 let extraTools, historyCharts;
 
-const setWebsite = () => {
+const setWebsite = (votePatron) => {
     const topPartners = document.querySelector('section.top-partners');
 
     if (topPartners) {
@@ -205,7 +205,9 @@ const addSelectors = (setList) => {
 const resetSelectors = () => selectors.querySelectorAll('select').forEach(select => { select.value = "" });
 
 const getTagLog = (rank, change) => {
-    return rank ? `<span class="tagLog">ostatnia poz.: ${rank}` + (change ? ` (${change})` : '') + `</span>` : '';
+    const formattedChange = change > 0 ? `+${change}` : change;
+
+    return rank ? `<span class="tagLog">ostatnia poz.: ${rank}` + (change ? ` (${formattedChange})` : '') + `</span>` : '';
 };
 
 
@@ -347,17 +349,53 @@ const addTags = (votePanel, setList) => {
             yearDict[item.years].list.push(item.id);
         }
     });
+}
 
-    setWebsite();
-    addInfoStatus();
-    addCheckboxes(setList);
-    addSelectors(setList);
+const addAverageYear = (votePatron) => {
+    const voteCounter = votePatron.querySelector('.lpWrapper .mobile_txt');
+
+    voteCounter.insertAdjacentHTML('afterend', `
+        <div class="averageYear">
+            <label>Średni rok:</label>
+            <strong id="averageYear">-</strong>
+        </div>
+    `);
+
+    const averageYearEl = votePatron.querySelector('#averageYear');
+
+    const calculateAverage = () => {
+        if (!itemDict || !dicYear) return;
+
+        let sum = 0;
+        let count = 0;
+
+        Object.entries(itemDict).forEach(([id, item]) => {
+            const input = item.querySelector('input');
+            if (input && input.checked) {
+                if (dicYear[id]) {
+                    sum += dicYear[id];
+                    count++;
+                }
+            }
+        });
+
+        averageYearEl.innerText = count > 0 ? Math.round(sum / count) : '-';
+    };
+
+    calculateAverage();
+
+    const observer = new MutationObserver(() => {
+        calculateAverage();
+    });
+
+    observer.observe(voteCounter, { childList: true, characterData: true, subtree: true });
 }
 
 (function init() {
     getList().then(setList => {
         const checkForElement = () => {
-          const votePanel = document.querySelector('[data-r357api-role="voting"]');
+            const votePatron = document.querySelector('.vote_patron');
+            const votePanel = votePatron.querySelector('[data-r357api-role="voting"]');
 
             if (!votePanel) {
                 requestAnimationFrame(checkForElement);
@@ -366,6 +404,10 @@ const addTags = (votePanel, setList) => {
 
             setWebsite();
             addTags(votePanel, setList);
+            addAverageYear(votePatron);
+            addInfoStatus();
+            addCheckboxes(setList);
+            addSelectors(setList);
         };
 
         requestAnimationFrame(checkForElement);
