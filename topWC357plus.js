@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         TOPWC357+
-// @version      0.5
+// @version      0.5.1
 // @author       cuberut
 // @description  Wspomaganie głosowania w Topie Wszech Czasów
 // @match        https://radio357.pl/top/glosowanie/*
@@ -14,39 +14,51 @@
 
 const myCss = GM_getResourceText("REMOTE_CSS");
 GM_addStyle(myCss);
-GM_addStyle("div.ct-chart { background-color: white; opacity: 95% }");
-
-// Seria A to właściwy wykres utworu
-GM_addStyle("div.ct-chart g.ct-series-a .ct-line { stroke: #f95f1f; stroke-width: 3px; }");
-GM_addStyle("div.ct-chart g.ct-series-a .ct-point { stroke: #f95f1f; fill: #f95f1f; }");
-
-// Seria B i C to dynamiczne przerywane linie progów Top 357 i Top 777
-GM_addStyle("div.ct-chart g.ct-series-b .ct-line, div.ct-chart g.ct-series-c .ct-line { stroke: #6b7280; stroke-dasharray: 8; stroke-width: 2px; opacity: 0.7; }");
-GM_addStyle("div.ct-chart g.ct-series-b .ct-point, div.ct-chart g.ct-series-c .ct-point { display: none; }");
-
-GM_addStyle("span.tagLog { position: absolute; right: 0; top: 0; right: 0px; bottom: 0; align-items: center; display: flex; font-size: x-small; color: #6b7280; }");
 
 GM_addStyle(`
+    /* === Układ główny === */
+    section.custom-lp .container-xxxl { position: static !important; }
+    section.custom-lp .container-xxxl .left { z-index: 999; }
+
+    /* === Narzędzia (Extra Tools) === */
+    #infoVisible { display: inline-block; text-align: right; width: 40px; }
+    #extraTools { margin: 3rem 0 1rem; }
+
+    #extraTools .checkbox { display: inline-block; width: 100%; margin-bottom: 5px; }
+    #extraTools .checkbox label { width: 100%; }
+    #extraTools label.lp-checkbox-label { margin-left: 0; }
+    #extraTools .content { margin-left: 30px; line-height: 1.2; display: inline-block; }
+
+    #selectors label { margin-top: 8px; display: inline-block; }
+    #selectors select { position: relative; display: inline-block; width: 50%; height: 30px; }
+
+    /* === Wykresy (Chartist) === */
+    .ct-chart { background-color: white; opacity: 0.95; }
+
+    /* Seria A */
+    .ct-chart .ct-series-a .ct-line { stroke: #f95f1f; stroke-width: 3px; }
+    .ct-chart .ct-series-a .ct-point { stroke: #f95f1f; fill: #f95f1f; }
+
+    /* Serie B i C (przerywane linie Top 357 / 777) */
+    .ct-chart .ct-series-b .ct-line,
+    .ct-chart .ct-series-c .ct-line { stroke: #6b7280; stroke-dasharray: 8; stroke-width: 2px; opacity: 0.7; }
+    .ct-chart .ct-series-b .ct-point,
+    .ct-chart .ct-series-c .ct-point { display: none; }
+
+    /* === Tag Log === */
+    span.tagLog { position: absolute; right: 0; top: 0; bottom: 0; align-items: center; display: flex; font-size: x-small; color: #6b7280; }
+
+    /* === Grupy artystów (zwijanie pustych) === */
     .top-vote-panel__artist-group h3 {
         transition: transform 0.25s ease-out, opacity 0.25s ease-out !important;
         transform-origin: left center;
         will-change: transform, opacity;
     }
-
     .top-vote-panel__artist-group.is-empty h3 {
         transform: scale(0.75) !important;
         opacity: 0.4 !important;
     }
 `);
-
-GM_addStyle(`
-    span#infoVisible { display: inline-block; text-align: right; width: 40px; }
-    div#extraTools { margin: 3rem 0 1rem; }
-    div#extraTools div, div#extraTools select { display: inline-block; }
-`);
-
-GM_addStyle("section.custom-lp .container-xxxl { position: static !important; }");
-GM_addStyle("section.custom-lp .container-xxxl .left { z-index: 999; }");
 
 const urlApi = 'https://cgudntoxuckknrtocdet.supabase.co/rest/v1/current_top_stats?select=*';
 const publicKey = 'sb_publishable_gNicZcTRVPvCDeRQNDtpeQ_Pz__cyYq';
@@ -66,11 +78,11 @@ const getList = async () => {
 
 const setInfoStatus = (amount) => `<p id="infoStatus">Liczba widocznych utworów: <strong><span id="infoVisible">${amount}</span>/<span>${amount}</span></strong> (<span id="infoPercent">100</span>%)`;
 
-const setCheckOnlyIsNew = (amount) => `<input id="onlyIsNew" type="checkbox" class="custom-check custom-checkbox" ${amount || 'disabled'}><label for="onlyIsNew"><span>Pokaż tylko nowości - ${amount} pozycji</span></label>`;
-const setCheckOnlyChart = (amount) => `<input id="onlyChart" type="checkbox" class="custom-check custom-checkbox" ${amount || 'disabled'}><label for="onlyChart"><span>Pokaż tylko z historią - ${amount} pozycji</span></label>`;
-const setCheckOnlyBDNT = (amount) => `<input id="onlyBDNT" type="checkbox" class="custom-check custom-checkbox" ${amount || 'disabled'}><label for="onlyBDNT"><span>Pokaż tylko utwory BDNT - ${amount} pozycji</span></label>`;
+const setCheckOnlyIsNew = (amount) => `<label class="lp-checkbox-label" for="onlyIsNew"><input type="checkbox" id="onlyIsNew" class="custom-check custom-checkbox lp-checkbox" ${amount || 'disabled'} /><span class="lp-checkbox-custom"></span><span class='content'>Pokaż tylko nowości - ${amount} pozycji</span></label>`;
+const setCheckOnlyChart = (amount) => `<label class="lp-checkbox-label" for="onlyChart"><input type="checkbox" id="onlyChart" class="custom-check custom-checkbox lp-checkbox" ${amount || 'disabled'} /><span class="lp-checkbox-custom"></span><span class='content'>Pokaż tylko z historią - ${amount} pozycji</span></label>`;
+const setCheckOnlyBDNT = (amount) => `<label class="lp-checkbox-label" for="onlyBDNT"><input type="checkbox" id="onlyBDNT" class="custom-check custom-checkbox lp-checkbox" ${amount || 'disabled'} /><span class="lp-checkbox-custom"></span><span class='content'>Pokaż tylko utwory BDNT - ${amount} pozycji</span></label>`;
 
-const setSelectByYears = () => `<label class="form-check-label" style="margin-top: 8px;">Pokaż tylko utwory z lat:</label>&#11;<select id="chooseByYears"></select>`;
+const setSelectByYears = () => `<label for="chooseByYears">Pokaż tylko utwory z lat:</label>&#11;<select id="chooseByYears" class="lp-checkbox-custom"></select>`;
 
 let extraTools, historyCharts;
 
@@ -145,9 +157,9 @@ const setCheckboxOnly = (element, rest, dic) => {
 }
 
 const addCheckboxes = (setList) => {
-    extraTools.insertAdjacentHTML('beforeend', `<div id="chb1"></div>`);
-    extraTools.insertAdjacentHTML('beforeend', `<div id="chb2"></div>`);
-    extraTools.insertAdjacentHTML('beforeend', `<div id="chb3"></div>`);
+    extraTools.insertAdjacentHTML('beforeend', `<div id="chb1" class="checkbox"></div>`);
+    extraTools.insertAdjacentHTML('beforeend', `<div id="chb2" class="checkbox"></div>`);
+    extraTools.insertAdjacentHTML('beforeend', `<div id="chb3" class="checkbox"></div>`);
 
     const checkboxes1 = extraTools.querySelector("#chb1");
     const checkboxes2 = extraTools.querySelector("#chb2");
