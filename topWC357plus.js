@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         TOPWC357+
-// @version      0.5.1
+// @version      0.5.2
 // @author       cuberut
 // @description  Wspomaganie głosowania w Topie Wszech Czasów
 // @match        https://radio357.pl/top/glosowanie/*
@@ -139,21 +139,46 @@ const changeInfoStatus = () => {
     });
 }
 
+// --- Wspólna logika filtrowania ---
+let filterCheckboxDic = null;
+let filterYearKey = "";
+
+const applyFilters = () => {
+    if (!itemDict) return;
+
+    Object.entries(itemDict).forEach(([id, item]) => {
+        let isVisible = true;
+
+        // Warunek z aktywnego checkboxa
+        if (filterCheckboxDic && !filterCheckboxDic[id]) {
+            isVisible = false;
+        }
+
+        // Warunek z selecta lat
+        if (filterYearKey && yearDict[filterYearKey] && !yearDict[filterYearKey].list.includes(id)) {
+            isVisible = false;
+        }
+
+        item.hidden = !isVisible;
+    });
+
+    changeInfoStatus();
+};
+// -----------------------------------
+
 const setCheckboxOnly = (element, rest, dic) => {
-    element.onclick = (e) => {
+    element.addEventListener('change', (e) => {
         const checked = e.target.checked;
-
-        Object.entries(itemDict).forEach(([key, item]) => {
-            if (dic[key] === undefined) {
-                item.hidden = checked;
-            } else {
-                item.hidden = !dic[key] && checked;
-            }
-        });
-
-        rest.forEach(x => { x.checked = false });
-        changeInfoStatus();
-    }
+        
+        // Odznacz pozostałe checkboxy
+        rest.forEach(x => { x.checked = false; });
+        
+        // Zapisz aktywny słownik (lub null, jeśli odznaczono)
+        filterCheckboxDic = checked ? dic : null;
+        
+        // Przelicz widok
+        applyFilters();
+    });
 }
 
 const addCheckboxes = (setList) => {
@@ -193,12 +218,14 @@ const setOptions = (dic) => Object.keys(dic)
     .filter(id => dic[id].list.length)
     .reduce((options, id) => `${options}<option value=${id}>${dic[id].name} (${dic[id].list.length})</option>`, "<option value=''>Wybierz...</option>");
 
-const setSelector = (element, keys) => {
-    element.onchange = (e) => {
-        const value = e.target.value;
-        mainList.forEach((item, i) => { item.hidden = keys[value] ? !keys[value].list.includes(item.querySelector('input').getAttribute('data-r357api-uuid')) : false });
-        changeInfoStatus();
-    }
+const setSelector = (element) => {
+    element.addEventListener('change', (e) => {
+        // Zapisz klucz roku (pusty dla 'Wybierz...')
+        filterYearKey = e.target.value;
+        
+        // Przelicz widok
+        applyFilters();
+    });
 }
 
 let selectors;
@@ -211,14 +238,19 @@ const addSelectors = (setList) => {
     const chooseByYears = selectors.querySelector("#chooseByYears");
     chooseByYears.insertAdjacentHTML('beforeend', setOptions(yearDict));
 
-    setSelector(chooseByYears, yearDict);
+    setSelector(chooseByYears);
 }
 
-const resetSelectors = () => selectors.querySelectorAll('select').forEach(select => { select.value = "" });
+const resetSelectors = () => {
+    if (selectors) {
+        selectors.querySelectorAll('select').forEach(select => { select.value = "" });
+    }
+    filterYearKey = "";
+    applyFilters();
+};
 
 const getTagLog = (rank, change) => {
     const formattedChange = change > 0 ? `+${change}` : change;
-
     return rank ? `<span class="tagLog">ostatnia poz.: ${rank}` + (change ? ` (${formattedChange})` : '') + `</span>` : '';
 };
 
